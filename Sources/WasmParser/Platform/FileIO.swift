@@ -34,7 +34,7 @@
                 while true {
                     let fd = path.withCString { open($0, O_RDONLY) }
                     if fd >= 0 { return fd }
-                    if errno == EINTR { continue }
+                    if (errno == EINTR || errno == EAGAIN) { continue }
                     throw WasmParserError("failed to open file \(path): \(errorMessage(errno))", offset: 0)
                 }
             #endif
@@ -66,7 +66,7 @@
                 while true {
                     let count = read(fd, base, buffer.count)
                     if count >= 0 { return Int(count) }
-                    if errno == EINTR { continue }
+                    if (errno == EINTR || errno == EAGAIN) { continue }
                     return -Int(errno)
                 }
             #endif

@@ -71,7 +71,7 @@ func valueOrErrno<I: FixedWidthInteger>(retryOnInterrupt: Bool = true, _ body: (
         if result >= 0 { return result }
         let errnoValue = _palErrno
         #if os(Windows) || canImport(Darwin) || canImport(Glibc) || canImport(Musl) || canImport(Android) || os(WASI)
-            if retryOnInterrupt && errnoValue == EINTR { continue }
+            if retryOnInterrupt && (errnoValue == EINTR || errnoValue == EAGAIN) { continue }
         #endif
         throw _wasiError(fromErrno: errnoValue)
     }

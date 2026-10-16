@@ -194,6 +194,7 @@ struct FdTable {
         for (_, entry) in map {
             let wasiEntry = entry.asEntry()
             guard !wasiEntry.isBorrowed else { continue }
+            if (wasiEntry.hostFileDescriptor == 4) { continue } // don't close /dev/tty
             do {
                 try wasiEntry.close()
             } catch {

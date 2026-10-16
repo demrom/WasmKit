@@ -12,6 +12,7 @@ func wasiFunction<M: GuestMemory & SendableMetatype>(
             return try implementation(caller, arguments)
         } catch {
             guard let errno = WASIAbi.Errno.reportable(for: error) else { throw error }
+            NSLog("WK exception thrown: \(errno)")
             return [.i32(.init(errno.rawValue))]
         }
     }
@@ -182,6 +183,7 @@ extension WASIImplementation {
             type: .init(parameters: [.i32, .i32, .i32, .i32], results: [.i32])
         ) { caller, arguments in
             try withMemoryBuffer(caller: caller) { buffer in
+                NSLog("WK fd_write: fd= \(arguments[0].i32) base= \(arguments[1].i32) size= \(arguments[2].i32)")
                 let nwritten = try self.fd_write(
                     fileDescriptor: arguments[0].i32,
                     ioVectors: UnsafeGuestBufferPointer<WASIAbi.IOVec>(
@@ -219,6 +221,7 @@ extension WASIImplementation {
         preview1["fd_close"] = wasiFunction(
             type: .init(parameters: [.i32], results: [.i32])
         ) { caller, arguments in
+            NSLog("WK fd_close: result= \(arguments[0].i32) ")
             try self.fd_close(fd: arguments[0].i32)
             return [.i32(.init(WASIAbi.Errno.SUCCESS.rawValue))]
         }
@@ -408,6 +411,7 @@ extension WASIImplementation {
 
         preview1["fd_prestat_dir_name"] = wasiFunction(type: .init(parameters: [.i32, .i32, .i32], results: [.i32])) { caller, arguments in
             try withMemoryBuffer(caller: caller) { buffer in
+                NSLog("WK fd_prestat_dir_name. fd= \(arguments[0].i32)")
                 try self.fd_prestat_dir_name(
                     fd: arguments[0].i32,
                     path: UnsafeGuestPointer(offset: arguments[1].i32),
@@ -622,6 +626,24 @@ extension WASIImplementation {
     /// The implemented part of the socket surface.
     func socketsFunctions<M: GuestMemory & SendableMetatype>() -> [String: WASIHostFunction<M>] {
         var preview1: [String: WASIHostFunction<M>] = [:]
+
+        preview1["sock_accept"] = wasiFunction(
+            type: .init(parameters: [.i32, .i32, .i32], results: [.i32])
+        ) { _, arguments in
+            return [.i32(.init(WASIAbi.Errno.ENOSYS.rawValue))]
+        }
+
+        preview1["sock_recv"] = wasiFunction(
+            type: .init(parameters: [.i32, .i32, .i32, .i32, .i32, .i32], results: [.i32])
+        ) { _, arguments in
+            return [.i32(.init(WASIAbi.Errno.ENOSYS.rawValue))]
+        }
+
+        preview1["sock_send"] = wasiFunction(
+            type: .init(parameters: [.i32, .i32, .i32, .i32, .i32], results: [.i32])
+        ) { _, arguments in
+            return [.i32(.init(WASIAbi.Errno.ENOSYS.rawValue))]
+        }
 
         preview1["sock_shutdown"] = wasiFunction(
             type: .init(parameters: [.i32, .i32], results: [.i32])

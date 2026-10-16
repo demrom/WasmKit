@@ -204,7 +204,9 @@ public struct EngineConfiguration: Sendable {
     ) {
         self.threadingModel = threadingModel ?? .defaultForCurrentPlatform
         self.compilationMode = compilationMode ?? .lazy
-        self.stackSize = stackSize ?? (1 << 19)
+        // self.stackSize = stackSize ?? (1 << 19)
+        // 1<<19 is not enough to run "glow".
+        self.stackSize = stackSize ?? (1 << 20)
         self.features = features
         self.memoryBoundsChecking = memoryBoundsChecking ?? .defaultForCurrentPlatform
         self.fuelMetering = fuelMetering

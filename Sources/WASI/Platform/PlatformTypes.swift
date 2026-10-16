@@ -82,6 +82,32 @@ extension WASIAbi.Filestat {
             ctim: WASIAbi.Timestamp(platformTimeSpec: stat.creationTime)
         )
     }
+    
+    init(forStdio: Bool) {
+        if (forStdio) {
+            self = WASIAbi.Filestat(
+                dev: 0,
+                ino: 0,
+                filetype: .CHARACTER_DEVICE,
+                nlink: 0,
+                size: 0,
+                atim: WASIAbi.Timestamp.currentWallClock(),
+                mtim: WASIAbi.Timestamp.currentWallClock(),
+                ctim: WASIAbi.Timestamp.currentWallClock()
+            )
+        } else {
+            self = WASIAbi.Filestat(
+                dev: 0,
+                ino: 0,
+                filetype: .UNKNOWN,
+                nlink: 0,
+                size: 0,
+                atim: WASIAbi.Timestamp.currentWallClock(),
+                mtim: WASIAbi.Timestamp.currentWallClock(),
+                ctim: WASIAbi.Timestamp.currentWallClock()
+            )
+        }
+    }
 }
 
 extension WASIAbi.Timestamp {

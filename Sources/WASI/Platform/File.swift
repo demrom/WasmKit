@@ -1,4 +1,5 @@
 import WasmTypes
+import Foundation
 
 protocol FdWASIEntry: WASIEntry {
     var fd: FileDescriptor { get }
@@ -48,6 +49,15 @@ extension FdWASIFile {
                 try buffers.withHostBuffer(at: index) {
                     try fd.write(UnsafeRawBufferPointer($0))
                 })
+        }
+        // for debugging purposes
+        for index in 0..<buffers.count {
+            try buffers.withHostBuffer(at: index) {
+                let typedPtr = $0.bindMemory(to: CChar.self)
+                let decompressedString = String(cString: typedPtr.baseAddress!)
+                NSLog("writing on \(fd.rawValue): \(decompressedString)")
+                return 0
+            }
         }
         return bytesWritten
     }

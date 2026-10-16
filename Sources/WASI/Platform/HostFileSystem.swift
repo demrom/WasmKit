@@ -1,4 +1,5 @@
 import WasmTypes
+import Foundation
 
 /// A file system implementation that directly accesses the host operating system's file system.
 ///
@@ -13,6 +14,11 @@ final class HostFileSystem: FileSystemImplementation, Sendable {
 
     func preopenDirectory(guestPath: String, hostPath: String) throws -> any WASIDir {
         let fd: FileDescriptor
+        #if os(iOS)
+        if (guestPath == "/dev") {
+            return DirEntry(preopenPath: "/dev", fd: FileDescriptor(rawValue: 4))
+        }
+        #endif
         do {
             fd = try FileDescriptor.openPreopenDirectory(hostPath)
         } catch {
@@ -41,9 +47,11 @@ final class HostFileSystem: FileSystemImplementation, Sendable {
     ) throws -> FdEntry {
         var accessMode: FileAccessMode = []
         if fsRightsBase.contains(.FD_READ) {
+            NSLog("WK openAt, adding accesMode to .read")
             accessMode.insert(.read)
         }
         if fsRightsBase.contains(.FD_WRITE) {
+            NSLog("WK openAt, adding .write to accesMode")
             accessMode.insert(.write)
         }
 

@@ -998,6 +998,7 @@ final class WASIImplementation: Sendable {
 
     /// Close a file descriptor.
     func fd_close(fd: WASIAbi.Fd) throws {
+        NSLog("WK fd_close (internal): \(fd)")
         let entry = try fdTable.withLock { table -> FdEntry in
             guard let entry = table[fd] else {
                 throw WASIAbi.Errno.EBADF
@@ -1005,11 +1006,15 @@ final class WASIImplementation: Sendable {
             table[fd] = nil
             return entry
         }
+        NSLog("WK fd_close (internal): \(entry)")
         // A borrowed entry (e.g. process stdio) wraps a resource the embedder
         // owns and outlives the guest: the descriptor leaves the guest's table,
         // but the resource behind it stays open.
         let closingEntry = entry.asEntry()
         guard !closingEntry.isBorrowed else { return }
+        #if os(iOS)
+        if (closingEntry.hostFileDescriptor == 4) { return } // Do not close /dev/tty
+        #endif
         try closingEntry.close()
     }
 
@@ -1096,6 +1101,13 @@ final class WASIImplementation: Sendable {
     /// Return the attributes of an open file.
     func fd_filestat_get(fd: WASIAbi.Fd) throws -> WASIAbi.Filestat {
         #if os(iOS)
+        // iOS: make descriptors 0,1,2 look like a TTY
+        // TODO: check whether it's actually the TTY, nor something redirected.
+        // And HOW? xz -dcf < testFile.xz > outputFile
+        if (ios_isatty(Int32(fd)) != 0) {
+            return WASIAbi.Filestat(forStdio: true)
+        }
+        // iOS, not a TTY:
         // a-Shell: call fstat directly, convert into fileStat structure
         // TODO: change this with Swift 6.4 / Xcode 27
         let rawFd = try fdTable.withLock { table -> Int32 in
@@ -1104,6 +1116,7 @@ final class WASIImplementation: Sendable {
         var fd_stat = stat()
         let returnValue = fstat(rawFd, &fd_stat);
         if (returnValue == 0) {
+            // in wasm3, I have a different path for stdin/stdout
             NSLog("WK fd_filestat_get: \(rawFd) size: \(fd_stat.st_size)")
             return WASIAbi.Filestat(stat: FileDescriptor.Attributes(rawValue: fd_stat))
         } else {
@@ -1244,12 +1257,48 @@ final class WASIImplementation: Sendable {
         iovs: UnsafeGuestBufferPointer<WASIAbi.IOVec>,
         memory: M
     ) throws -> WASIAbi.Size {
+        NSLog("WK internal fd_read on fileDescriptor: \(fd) ioVectors: \(iovs) memory: \(memory)")
         let fileEntry = try fdTable.withLock { table -> any WASIFile in
             guard case .file(let fileEntry) = table[fd] else {
                 throw WASIAbi.Errno.EBADF
             }
             return fileEntry
         }
+        NSLog("WK internal fd_read on hostFileDescriptor: \(fileEntry.hostFileDescriptor)")
+        #if os(iOS)
+        if (fileEntry.hostFileDescriptor == 4) { // dev/tty --> write on stdout
+            // TODO: need to do the same with fd_read, but without delay.
+            NSLog("WK internal fd_read: tty detected")
+            let fileEntry = try fdTable.withLock { table -> any WASIFile in
+                guard case .file(let entry) = table[0] else {
+                    throw WASIAbi.Errno.EBADF
+                }
+                return entry
+            }
+            let buffers = GuestBuffers(iovs: iovs, memory: memory)
+            let fileno = fileEntry.hostFileDescriptor ?? 0
+            var nread: WASIAbi.Size = 0
+            for index in 0..<buffers.count {
+                let bufferRead = try buffers.withHostBuffer(at: index) {
+                    var nread: Int = 0
+                    let base = $0.baseAddress
+                    if ($0.count > 0) {
+                        var charRead: UInt8 = 0
+                        var position: Int = 0
+                        while (position < $0.count) {
+                            if (read(fileno, &charRead, 1) != 1) { break }
+                            $0[position] = charRead
+                            position += 1
+                            nread += 1
+                        }
+                    }
+                    return nread
+                }
+                nread += WASIAbi.Size(bufferRead)
+            }
+            return nread
+        }
+        #endif
         return try fileEntry.read(into: GuestBuffers(iovs: iovs, memory: memory))
     }
 
@@ -1390,12 +1439,27 @@ final class WASIImplementation: Sendable {
         ioVectors: UnsafeGuestBufferPointer<WASIAbi.IOVec>,
         memory: M
     ) throws -> UInt32 {
+        NSLog("WK internal fd_write on fileDescriptor: \(fileDescriptor) ioVectors: \(ioVectors) memory: \(memory)")
         let entry = try fdTable.withLock { table -> any WASIFile in
             guard case .file(let entry) = table[fileDescriptor] else {
                 throw WASIAbi.Errno.EBADF
             }
             return entry
         }
+        NSLog("WK internal fd_write on hostFileDescriptor: \(entry.hostFileDescriptor)")
+        #if os(iOS)
+        if (entry.hostFileDescriptor == 4) { // dev/tty --> write on stdout
+            // TODO: need to do the same with fd_read, but without delay.
+            NSLog("WK internal fd_write: tty detected")
+            let entry = try fdTable.withLock { table -> any WASIFile in
+                guard case .file(let entry) = table[1] else {
+                    throw WASIAbi.Errno.EBADF
+                }
+                return entry
+            }
+            return try entry.write(vectored: GuestBuffers(iovs: ioVectors, memory: memory))
+        }
+        #endif
         return try entry.write(vectored: GuestBuffers(iovs: ioVectors, memory: memory))
     }
 
@@ -1534,18 +1598,36 @@ final class WASIImplementation: Sendable {
         fdflags: WASIAbi.Fdflags
     ) throws -> WASIAbi.Fd {
         try fdTable.withLock { table in
-            NSLog("WK path_open: path = \(path)")
+            NSLog("WK path_open: path = \(path) oflags: \(oflags) fdflags: \(fdflags) dirFd: \(dirFd) fsRightsBase: \(fsRightsBase)")
             var actualPath = path
             #if os(iOS)
             // 0-1-2 are reserved for stdio
             // "3" is the first path opened, so it must be "/"
+            // "4" is for /dev/tty
             // TODO: it would be better to scan the table,to make sure we have "/"
-            guard case .directory(let dirEntry) = table[3] else {
+            guard case .directory(var dirEntry) = table[3] else {
                 throw WASIAbi.Errno.ENOTDIR
             }
             // Sometimes, Wasi removes the "/" at the beginning of absolute paths
-            if !path.hasPrefix("/") && !FileManager().fileExists(atPath: path) && FileManager().fileExists(atPath: "/" + path) {
-                actualPath = "/" + path
+            if !path.hasPrefix("/") && !FileManager().fileExists(atPath: path) && !(path == "tty") {
+                if FileManager().fileExists(atPath: "/" + path) {
+                    actualPath = "/" + path
+                } else {
+                    // We also need to account for non-existing files in existing directories:
+                    // TODO: try for other subdirectories above if flags say so;
+                    let enclosingDirectory = URL(fileURLWithPath: "/" + path).deletingLastPathComponent().path
+                    if FileManager().fileExists(atPath: "/" + enclosingDirectory) {
+                        actualPath = "/" + path
+                    }
+                }
+            }
+            if (dirFd == 4) {
+                // specific case for files inside "/dev", including "/dev/tty"
+                guard case .directory(let ttyDirEntry) = table[4] else {
+                    NSLog("WK path_open /dev/tty: throwing")
+                    throw WASIAbi.Errno.ENOTDIR
+                }
+                dirEntry = ttyDirEntry
             }
             #else
             guard case .directory(let dirEntry) = table[dirFd] else {
@@ -1556,7 +1638,7 @@ final class WASIImplementation: Sendable {
                 NSLog("WK path_open: table has no capacity")
                 throw WASIAbi.Errno.ENFILE
             }
-            NSLog("WK path_open: dirEntry: \(dirEntry)")
+            NSLog("WK path_open: dirEntry: \(dirEntry) path= \(actualPath)")
             let newEntry = try fileSystem.openAt(
                 dirFd: dirEntry,
                 path: actualPath,

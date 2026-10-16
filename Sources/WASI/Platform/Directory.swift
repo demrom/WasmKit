@@ -67,7 +67,25 @@ extension DirEntry: WASIDir, FdWASIEntry {
         }
 
         #if os(iOS)
-        var localMode: Int32 = Int32(options.rawValue)
+        var localMode: Int32 = Int32(0)
+        if options.contains(.create) {
+            localMode |= O_CREAT
+        }
+        if options.contains(.truncate) {
+            localMode |= O_TRUNC
+        }
+        if options.contains(.append) {
+            localMode |= O_APPEND
+        }
+        if options.contains(.directory) {
+            localMode |= O_DIRECTORY
+        }
+        if options.contains(.exclusiveCreate) {
+            localMode |= O_EXCL
+        }
+        if options.contains(.noFollow) {
+            localMode |= O_NOFOLLOW
+        }
         switch (mode) {
         case .readOnly:
             localMode |= O_RDONLY
@@ -76,8 +94,11 @@ extension DirEntry: WASIDir, FdWASIEntry {
         case .readWrite:
             localMode |= O_RDWR
         }
+        if (self.fd.rawValue == 4) && path == "tty" {
+            return FileDescriptor(rawValue: 4) // special case for /dev/tty
+        }
         let newFd_fd = open(path, localMode)
-        // NSLog("opening path= \(path) mode: \(mode.rawValue) O_WRONLY= \(O_WRONLY) options: \(options.rawValue) new fd: \(newFd_fd)")
+        NSLog("opened path= \(path) mode: \(localMode) options: \(options.rawValue) new fd: \(newFd_fd)")
         if (newFd_fd > 0) {
             if (options.contains(.create)) {
                 // make sure the new file is created with rw-r--r-- permissions
